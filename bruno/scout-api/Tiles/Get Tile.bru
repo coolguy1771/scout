@@ -1,0 +1,33 @@
+meta {
+  name: Get Tile
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/tiles/{{layer}}/{{z}}/{{x}}/{{y}}.pbf
+  body: none
+  auth: none
+}
+
+params:path {
+  layer: parcels
+  z: 10
+  x: 163
+  y: 395
+}
+
+docs {
+  # Get Tile
+
+  Retrieves a vector tile in PBF format.
+
+  **Path Parameters:**
+  - `layer`: Layer name (parcels, highways, rail, airports, floodplains, wetlands, protected_land)
+  - `z`: Zoom level (0-20)
+  - `x`: Tile X coordinate
+  - `y`: Tile Y coordinate
+
+  **Note:** Private layers may require authentication.
+}
+

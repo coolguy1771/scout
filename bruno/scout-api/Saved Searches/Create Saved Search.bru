@@ -1,0 +1,46 @@
+meta {
+  name: Create Saved Search
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/api/savedSearches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{token}}
+}
+
+body:json {
+  {
+    "projectId": null,
+    "name": "My Saved Search",
+    "queryJson": {
+      "bbox": [-122.5, 37.7, -122.3, 37.8],
+      "minAcres": 1.0,
+      "maxAcres": 100.0,
+      "page": 1,
+      "pageSize": 50
+    },
+    "scoringProfileId": null,
+    "datasetVersionId": null
+  }
+}
+
+docs {
+  # Create Saved Search
+  
+  Creates a saved search that can be reused later.
+  
+  **Body:**
+  - `projectId`: Optional UUID of project to associate with (string or null)
+  - `name`: Name for the saved search (string)
+  - `queryJson`: Search query object (object)
+  - `scoringProfileId`: Optional UUID of scoring profile (string or null)
+  - `datasetVersionId`: Optional UUID of dataset version (string or null)
+}
+

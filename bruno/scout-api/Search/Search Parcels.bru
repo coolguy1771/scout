@@ -1,0 +1,54 @@
+meta {
+  name: Search Parcels
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/api/suitability/search
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{token}}
+}
+
+body:json {
+  {
+    "bbox": [-122.5, 37.7, -122.3, 37.8],
+    "minAcres": 1.0,
+    "maxAcres": 100.0,
+    "zoningTags": ["residential", "commercial"],
+    "jurisdiction": "San Francisco",
+    "stateFips": "06",
+    "page": 1,
+    "pageSize": 50,
+    "exclusions": {
+      "floodplain": true,
+      "wetlands": true,
+      "protectedLand": true
+    }
+  }
+}
+
+docs {
+  # Search Parcels
+  
+  Performs a two-phase search for parcels matching the criteria.
+  
+  **Query Parameters:**
+  - `bbox`: Bounding box [minLon, minLat, maxLon, maxLat] (optional)
+  - `aoi`: Area of Interest polygon coordinates (optional, alternative to bbox)
+  - `minAcres`: Minimum parcel size in acres (optional)
+  - `maxAcres`: Maximum parcel size in acres (optional)
+  - `zoningTags`: Array of zoning tags to filter by (optional)
+  - `jurisdiction`: Jurisdiction name (optional)
+  - `stateFips`: State FIPS code (optional)
+  - `scoringProfileId`: UUID of scoring profile to use (optional)
+  - `page`: Page number (default: 1)
+  - `pageSize`: Results per page (default: 50, max: 1000)
+  - `exclusions`: Object with boolean flags for exclusions (optional)
+}
+

@@ -1,0 +1,29 @@
+meta {
+  name: Get Parcel
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/api/parcels/{{parcelId}}
+  body: none
+  auth: bearer
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}
+
+params:path {
+  parcelId: ~
+}
+
+docs {
+  # Get Parcel
+  
+  Retrieves detailed information about a parcel including features.
+  
+  **Path Parameters:**
+  - `parcelId`: UUID of the parcel
+}
+

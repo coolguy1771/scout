@@ -1,0 +1,385 @@
+basePath: /
+definitions:
+  api.CreateProjectRequest:
+    properties:
+      name:
+        type: string
+    type: object
+  api.ErrorResponse:
+    properties:
+      error:
+        type: string
+      message:
+        type: string
+    type: object
+  api.NearbyFeatureResponse:
+    properties:
+      distanceM:
+        type: number
+      featureId:
+        type: string
+      geometry: {}
+      name:
+        type: string
+    type: object
+  api.NearbyResponse:
+    properties:
+      features:
+        additionalProperties:
+          items:
+            $ref: '#/definitions/api.NearbyFeatureResponse'
+          type: array
+        type: object
+      parcelId:
+        type: string
+    type: object
+  api.ParcelFeatureResponse:
+    properties:
+      distToAirportM:
+        type: number
+      distToHighwayM:
+        type: number
+      distToPowerLineM:
+        type: number
+      distToRailM:
+        type: number
+      distToSubstationM:
+        type: number
+      inFloodplain:
+        type: boolean
+      inProtectedLand:
+        type: boolean
+      inWetlands:
+        type: boolean
+    type: object
+  api.ParcelResponse:
+    properties:
+      acres:
+        type: number
+      apn:
+        type: string
+      features:
+        $ref: '#/definitions/api.ParcelFeatureResponse'
+      jurisdiction:
+        type: string
+      parcelId:
+        type: string
+      stateFips:
+        type: string
+      zoningRaw:
+        type: string
+      zoningTags:
+        items:
+          type: string
+        type: array
+    type: object
+  api.UpdateProjectRequest:
+    properties:
+      name:
+        type: string
+    type: object
+  models.Project:
+    properties:
+      createdAt:
+        type: string
+      createdBy:
+        type: string
+      name:
+        type: string
+      projectId:
+        type: string
+      tenantId:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@scout.com
+    name: API Support
+  description: API for Scout land parcel analysis platform
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: Scout API
+  version: "1.0"
+paths:
+  /api/parcels/{parcelId}:
+    get:
+      consumes:
+      - application/json
+      description: Get a parcel by ID with features
+      parameters:
+      - description: Parcel ID
+        format: uuid
+        in: path
+        name: parcelId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ParcelResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get parcel
+      tags:
+      - parcels
+  /api/parcels/{parcelId}/nearby:
+    get:
+      consumes:
+      - application/json
+      description: Get nearby infrastructure features for a parcel
+      parameters:
+      - description: Parcel ID
+        format: uuid
+        in: path
+        name: parcelId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.NearbyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get nearby features
+      tags:
+      - parcels
+  /api/projects:
+    get:
+      consumes:
+      - application/json
+      description: List all projects for the tenant
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Project'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List projects
+      tags:
+      - projects
+    post:
+      consumes:
+      - application/json
+      description: Create a new project for the tenant
+      parameters:
+      - description: Project information
+        in: body
+        name: project
+        required: true
+        schema:
+          $ref: '#/definitions/api.CreateProjectRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Project'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create project
+      tags:
+      - projects
+  /api/projects/{projectId}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a project
+      parameters:
+      - description: Project ID
+        format: uuid
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete project
+      tags:
+      - projects
+    get:
+      consumes:
+      - application/json
+      description: Get a project by ID
+      parameters:
+      - description: Project ID
+        format: uuid
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Project'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get project
+      tags:
+      - projects
+    put:
+      consumes:
+      - application/json
+      description: Update a project
+      parameters:
+      - description: Project ID
+        format: uuid
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Project information
+        in: body
+        name: project
+        required: true
+        schema:
+          $ref: '#/definitions/api.UpdateProjectRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Project'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update project
+      tags:
+      - projects
+  /api/suitability/search:
+    post:
+      consumes:
+      - application/json
+      description: Search for parcels based on suitability criteria using OpenSearch
+        query DSL
+      parameters:
+      - description: OpenSearch query DSL
+        in: body
+        name: query
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Search results
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Search parcels
+      tags:
+      - search
+schemes:
+- http
+- https
+securityDefinitions:
+  BearerAuth:
+    description: 'Enter the token with the `Bearer: ` prefix, e.g. "Bearer abc123..."'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

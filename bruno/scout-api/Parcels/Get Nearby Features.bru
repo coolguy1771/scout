@@ -1,0 +1,40 @@
+meta {
+  name: Get Nearby Features
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/api/parcels/{{parcelId}}/nearby
+  body: none
+  auth: bearer
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}
+
+params:path {
+  parcelId: ~
+}
+
+params:query {
+  types: rail,highway,airport
+  limit: 10
+  maxDistanceM: 5000
+}
+
+docs {
+  # Get Nearby Features
+  
+  Finds nearby infrastructure features for a parcel.
+  
+  **Path Parameters:**
+  - `parcelId`: UUID of the parcel
+  
+  **Query Parameters:**
+  - `types`: Comma-separated list of feature types (rail, highway, airport, power_line, substation)
+  - `limit`: Maximum number of results per type (default: 10)
+  - `maxDistanceM`: Maximum distance in meters (default: 5000)
+}
+

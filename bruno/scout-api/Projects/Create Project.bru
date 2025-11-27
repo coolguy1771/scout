@@ -1,0 +1,32 @@
+meta {
+  name: Create Project
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/api/projects
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{token}}
+}
+
+body:json {
+  {
+    "name": "My Project"
+  }
+}
+
+docs {
+  # Create Project
+  
+  Creates a new project for the authenticated tenant.
+  
+  **Required:**
+  - `name`: Project name (string)
+}
+

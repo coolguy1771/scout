@@ -1,0 +1,35 @@
+meta {
+  name: Get Job Status
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/api/jobs/{{jobId}}
+  body: none
+  auth: bearer
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}
+
+params:path {
+  jobId: ~
+}
+
+docs {
+  # Get Job Status
+  
+  Retrieves the status of an async job (export, tile build, feature recompute).
+  
+  **Path Parameters:**
+  - `jobId`: UUID of the job
+  
+  **Status Values:**
+  - `pending`: Job is queued
+  - `processing`: Job is being processed
+  - `completed`: Job finished successfully
+  - `failed`: Job failed
+}
+

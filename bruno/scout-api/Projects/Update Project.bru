@@ -1,0 +1,39 @@
+meta {
+  name: Update Project
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{base_url}}/api/projects/{{projectId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{token}}
+}
+
+body:json {
+  {
+    "name": "Updated Project Name"
+  }
+}
+
+params:path {
+  projectId: ~
+}
+
+docs {
+  # Update Project
+  
+  Updates a project's name.
+  
+  **Path Parameters:**
+  - `projectId`: UUID of the project
+  
+  **Body:**
+  - `name`: New project name (string)
+}
+

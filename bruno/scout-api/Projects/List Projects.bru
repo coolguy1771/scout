@@ -1,0 +1,22 @@
+meta {
+  name: List Projects
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/api/projects
+  body: none
+  auth: bearer
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}
+
+docs {
+  # List Projects
+  
+  Lists all projects for the authenticated tenant.
+}
+

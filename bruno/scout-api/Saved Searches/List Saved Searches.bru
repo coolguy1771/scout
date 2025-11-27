@@ -1,0 +1,29 @@
+meta {
+  name: List Saved Searches
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/api/savedSearches
+  body: none
+  auth: bearer
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}
+
+params:query {
+  projectId: ~
+}
+
+docs {
+  # List Saved Searches
+  
+  Lists all saved searches for the tenant.
+  
+  **Query Parameters:**
+  - `projectId`: Optional UUID to filter by project
+}
+

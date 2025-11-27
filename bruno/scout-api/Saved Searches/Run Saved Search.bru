@@ -1,0 +1,29 @@
+meta {
+  name: Run Saved Search
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/api/savedSearches/{{savedSearchId}}/run
+  body: none
+  auth: bearer
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}
+
+params:path {
+  savedSearchId: ~
+}
+
+docs {
+  # Run Saved Search
+  
+  Executes a saved search and returns results.
+  
+  **Path Parameters:**
+  - `savedSearchId`: UUID of the saved search
+}
+

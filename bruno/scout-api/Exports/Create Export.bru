@@ -1,0 +1,40 @@
+meta {
+  name: Create Export
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/api/exports
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{token}}
+}
+
+body:json {
+  {
+    "parcelIds": [],
+    "savedSearchId": null,
+    "kind": "csv",
+    "scoringProfileId": null
+  }
+}
+
+docs {
+  # Create Export
+  
+  Creates an export job. Returns a job ID that can be used to check status.
+  
+  **Body:**
+  - `parcelIds`: Array of parcel UUIDs to export (optional)
+  - `savedSearchId`: UUID of saved search to export results from (optional)
+  - `kind`: Export format - "csv", "geojson", or "pdf" (string)
+  - `scoringProfileId`: Optional UUID of scoring profile (string or null)
+  
+  **Note:** Either `parcelIds` or `savedSearchId` must be provided.
+}
+

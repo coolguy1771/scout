@@ -1,0 +1,29 @@
+meta {
+  name: Delete Project
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{base_url}}/api/projects/{{projectId}}
+  body: none
+  auth: bearer
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}
+
+params:path {
+  projectId: ~
+}
+
+docs {
+  # Delete Project
+  
+  Deletes a project by ID.
+  
+  **Path Parameters:**
+  - `projectId`: UUID of the project
+}
+
