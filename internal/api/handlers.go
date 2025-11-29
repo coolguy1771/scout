@@ -35,6 +35,9 @@ type Handler struct {
 	exportRepo         *repository.ExportRepository
 	scoringProfileRepo *repository.ScoringProfileRepository
 	favoriteRepo       *repository.FavoriteRepository
+	userRepo           *repository.UserRepository
+	tenantRepo         *repository.TenantRepository
+	membershipRepo     *repository.MembershipRepository
 	searchService      *search.SearchService
 	scoringService     *scoring.Service
 	tileStorage        *storage.TileStorage
@@ -49,6 +52,9 @@ func NewHandler(db *database.DB, logger *zap.Logger, cfg *config.Config) *Handle
 	exportRepo := repository.NewExportRepository(db.DB, logger)
 	scoringProfileRepo := repository.NewScoringProfileRepository(db.DB, logger)
 	favoriteRepo := repository.NewFavoriteRepository(db.DB, logger)
+	userRepo := repository.NewUserRepository(db.DB, logger)
+	tenantRepo := repository.NewTenantRepository(db.DB, logger)
+	membershipRepo := repository.NewMembershipRepository(db.DB, logger)
 
 	scoringService := scoring.NewService(scoringProfileRepo, logger)
 	searchService := search.NewSearchService(parcelRepo, parcelFeatureRepo, scoringService, cfg, logger)
@@ -69,6 +75,9 @@ func NewHandler(db *database.DB, logger *zap.Logger, cfg *config.Config) *Handle
 		exportRepo:         exportRepo,
 		scoringProfileRepo: scoringProfileRepo,
 		favoriteRepo:       favoriteRepo,
+		userRepo:           userRepo,
+		tenantRepo:         tenantRepo,
+		membershipRepo:     membershipRepo,
 		searchService:      searchService,
 		scoringService:     scoringService,
 		tileStorage:        tileStorage,
@@ -1285,8 +1294,8 @@ func (h *ScoringProfileHandler) CreateScoringProfile(w http.ResponseWriter, r *h
 		Name:             profile.Name,
 		Version:          profile.Version,
 		Weights:          weights,
-		Thresholds:      thresholds,
-		HardConstraints: constraints,
+		Thresholds:       thresholds,
+		HardConstraints:  constraints,
 		CreatedBy:        profile.CreatedBy.String(),
 		CreatedAt:        profile.CreatedAt.Format(time.RFC3339),
 	}
@@ -1345,8 +1354,8 @@ func (h *ScoringProfileHandler) ListScoringProfiles(w http.ResponseWriter, r *ht
 			Name:             profile.Name,
 			Version:          profile.Version,
 			Weights:          weights,
-			Thresholds:      thresholds,
-			HardConstraints: constraints,
+			Thresholds:       thresholds,
+			HardConstraints:  constraints,
 			CreatedBy:        profile.CreatedBy.String(),
 			CreatedAt:        profile.CreatedAt.Format(time.RFC3339),
 		}
@@ -1409,8 +1418,8 @@ func (h *ScoringProfileHandler) GetScoringProfile(w http.ResponseWriter, r *http
 		Name:             profile.Name,
 		Version:          profile.Version,
 		Weights:          weights,
-		Thresholds:      thresholds,
-		HardConstraints: constraints,
+		Thresholds:       thresholds,
+		HardConstraints:  constraints,
 		CreatedBy:        profile.CreatedBy.String(),
 		CreatedAt:        profile.CreatedAt.Format(time.RFC3339),
 	}
@@ -1546,8 +1555,8 @@ func (h *ScoringProfileHandler) UpdateScoringProfile(w http.ResponseWriter, r *h
 		Name:             existing.Name,
 		Version:          existing.Version,
 		Weights:          weights,
-		Thresholds:      thresholds,
-		HardConstraints: constraints,
+		Thresholds:       thresholds,
+		HardConstraints:  constraints,
 		CreatedBy:        existing.CreatedBy.String(),
 		CreatedAt:        existing.CreatedAt.Format(time.RFC3339),
 	}
@@ -2034,6 +2043,1147 @@ func (h *ParcelHandler) CheckParcelFavorite(w http.ResponseWriter, r *http.Reque
 	}
 
 	respondJSON(w, http.StatusOK, map[string]bool{"isFavorited": exists})
+}
+
+// UserHandler handles user-related requests
+type UserHandler struct {
+	*Handler
+}
+
+func NewUserHandler(db *database.DB, logger *zap.Logger, cfg *config.Config) *UserHandler {
+	return &UserHandler{Handler: NewHandler(db, logger, cfg)}
+}
+
+// CreateUser creates a new user (admin only)
+// @Summary Create user
+// @Description Create a new user (admin only)
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param user body CreateUserRequest true "User information"
+// @Success 201 {object} UserResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/users [post]
+func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only admin can create users
+	role := auth.GetRole(r.Context())
+	if role != "admin" {
+		respondError(w, http.StatusForbidden, "Only admins can create users")
+		return
+	}
+
+	var req CreateUserRequest
+	if err := ParseJSONRequest(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
+	// Check if user already exists
+	existing, err := h.userRepo.GetByEmail(r.Context(), req.Email)
+	if err == nil && existing != nil {
+		respondError(w, http.StatusConflict, "User with email already exists")
+		return
+	}
+
+	user := &models.User{
+		UserID:    uuid.New(),
+		Email:     req.Email,
+		Name:      req.Name,
+		CreatedAt: time.Now(),
+	}
+
+	if err := h.userRepo.Create(r.Context(), user); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			respondError(w, http.StatusConflict, "User with email already exists")
+			return
+		}
+		h.logger.Error("Failed to create user", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to create user")
+		return
+	}
+
+	response := UserResponse{
+		UserID:    user.UserID.String(),
+		Email:     user.Email,
+		Name:      user.Name,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusCreated, response)
+}
+
+// ListUsers lists all users for the tenant (admin only)
+// @Summary List users
+// @Description List all users in the tenant (admin only)
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param limit query int false "Limit" default(50)
+// @Param offset query int false "Offset" default(0)
+// @Success 200 {object} ListUsersResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/users [get]
+func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only admin can list users
+	role := auth.GetRole(r.Context())
+	if role != "admin" {
+		respondError(w, http.StatusForbidden, "Only admins can list users")
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+
+	limit := 50
+	offset := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	users, err := h.userRepo.List(r.Context(), tenantUUID, limit, offset)
+	if err != nil {
+		h.logger.Error("Failed to list users", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to list users")
+		return
+	}
+
+	responses := make([]UserResponse, len(users))
+	for i, user := range users {
+		responses[i] = UserResponse{
+			UserID:    user.UserID.String(),
+			Email:     user.Email,
+			Name:      user.Name,
+			CreatedAt: user.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	respondJSON(w, http.StatusOK, ListUsersResponse{
+		Users:  responses,
+		Limit:  limit,
+		Offset: offset,
+	})
+}
+
+// GetUser gets a user by ID
+// @Summary Get user
+// @Description Get a user by ID
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param userId path string true "User ID" format(uuid)
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/users/{userId} [get]
+func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
+	userIDStr := chi.URLParam(r, "userId")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	// Users can view their own profile, admins can view any user
+	currentUserID := h.getUserID(r.Context())
+	role := auth.GetRole(r.Context())
+	if currentUserID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing user ID")
+		return
+	}
+
+	currentUserUUID, _ := uuid.Parse(currentUserID)
+	if role != "admin" && currentUserUUID != userID {
+		respondError(w, http.StatusForbidden, "You can only view your own profile")
+		return
+	}
+
+	user, err := h.userRepo.GetByID(r.Context(), userID)
+	if err != nil {
+		h.logger.Error("Failed to get user", zap.Error(err))
+		respondError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	response := UserResponse{
+		UserID:    user.UserID.String(),
+		Email:     user.Email,
+		Name:      user.Name,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// GetCurrentUser gets the current user's profile
+// @Summary Get current user
+// @Description Get the current user's profile
+// @Tags users
+// @Accept json
+// @Produce json
+// @Success 200 {object} UserResponse
+// @Failure 401 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/users/me [get]
+func (h *UserHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	userID := h.getUserID(r.Context())
+	if userID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing user ID")
+		return
+	}
+
+	userUUID, _ := uuid.Parse(userID)
+	user, err := h.userRepo.GetByID(r.Context(), userUUID)
+	if err != nil {
+		h.logger.Error("Failed to get user", zap.Error(err))
+		respondError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	response := UserResponse{
+		UserID:    user.UserID.String(),
+		Email:     user.Email,
+		Name:      user.Name,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// UpdateUser updates a user
+// @Summary Update user
+// @Description Update a user (users can update their own profile, admins can update any user)
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param userId path string true "User ID" format(uuid)
+// @Param user body UpdateUserRequest true "User information"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/users/{userId} [put]
+func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
+	userIDStr := chi.URLParam(r, "userId")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	var req UpdateUserRequest
+	if err := ParseJSONRequest(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
+	// Users can update their own profile, admins can update any user
+	currentUserID := h.getUserID(r.Context())
+	role := auth.GetRole(r.Context())
+	if currentUserID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing user ID")
+		return
+	}
+
+	currentUserUUID, _ := uuid.Parse(currentUserID)
+	if role != "admin" && currentUserUUID != userID {
+		respondError(w, http.StatusForbidden, "You can only update your own profile")
+		return
+	}
+
+	// Get existing user
+	user, err := h.userRepo.GetByID(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Check if email is being changed and if new email already exists
+	if user.Email != req.Email {
+		existing, err := h.userRepo.GetByEmail(r.Context(), req.Email)
+		if err == nil && existing != nil && existing.UserID != userID {
+			respondError(w, http.StatusConflict, "User with email already exists")
+			return
+		}
+	}
+
+	user.Email = req.Email
+	user.Name = req.Name
+
+	if err := h.userRepo.Update(r.Context(), user); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			respondError(w, http.StatusConflict, "User with email already exists")
+			return
+		}
+		h.logger.Error("Failed to update user", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to update user")
+		return
+	}
+
+	response := UserResponse{
+		UserID:    user.UserID.String(),
+		Email:     user.Email,
+		Name:      user.Name,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// UpdateCurrentUser updates the current user's profile
+// @Summary Update current user
+// @Description Update the current user's profile
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param user body UpdateUserRequest true "User information"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/users/me [put]
+func (h *UserHandler) UpdateCurrentUser(w http.ResponseWriter, r *http.Request) {
+	userID := h.getUserID(r.Context())
+	if userID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing user ID")
+		return
+	}
+
+	userUUID, _ := uuid.Parse(userID)
+
+	var req UpdateUserRequest
+	if err := ParseJSONRequest(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
+	// Get existing user
+	user, err := h.userRepo.GetByID(r.Context(), userUUID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Check if email is being changed and if new email already exists
+	if user.Email != req.Email {
+		existing, err := h.userRepo.GetByEmail(r.Context(), req.Email)
+		if err == nil && existing != nil && existing.UserID != userUUID {
+			respondError(w, http.StatusConflict, "User with email already exists")
+			return
+		}
+	}
+
+	user.Email = req.Email
+	user.Name = req.Name
+
+	if err := h.userRepo.Update(r.Context(), user); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			respondError(w, http.StatusConflict, "User with email already exists")
+			return
+		}
+		h.logger.Error("Failed to update user", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to update user")
+		return
+	}
+
+	response := UserResponse{
+		UserID:    user.UserID.String(),
+		Email:     user.Email,
+		Name:      user.Name,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// DeleteUser deletes a user (admin only)
+// @Summary Delete user
+// @Description Delete a user (admin only)
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param userId path string true "User ID" format(uuid)
+// @Success 204 "No Content"
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/users/{userId} [delete]
+func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only admin can delete users
+	role := auth.GetRole(r.Context())
+	if role != "admin" {
+		respondError(w, http.StatusForbidden, "Only admins can delete users")
+		return
+	}
+
+	userIDStr := chi.URLParam(r, "userId")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	if err := h.userRepo.Delete(r.Context(), userID); err != nil {
+		h.logger.Error("Failed to delete user", zap.Error(err))
+		if err.Error() == "user not found" {
+			respondError(w, http.StatusNotFound, "User not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "Failed to delete user")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// TenantHandler handles tenant-related requests
+type TenantHandler struct {
+	*Handler
+}
+
+func NewTenantHandler(db *database.DB, logger *zap.Logger, cfg *config.Config) *TenantHandler {
+	return &TenantHandler{Handler: NewHandler(db, logger, cfg)}
+}
+
+// CreateTenant creates a new tenant (super admin only - for now, admin can create)
+// @Summary Create tenant
+// @Description Create a new tenant (admin only)
+// @Tags tenants
+// @Accept json
+// @Produce json
+// @Param tenant body CreateTenantRequest true "Tenant information"
+// @Success 201 {object} TenantResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/tenants [post]
+func (h *TenantHandler) CreateTenant(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only admin can create tenants
+	role := auth.GetRole(r.Context())
+	if role != "admin" {
+		respondError(w, http.StatusForbidden, "Only admins can create tenants")
+		return
+	}
+
+	var req CreateTenantRequest
+	if err := ParseJSONRequest(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
+	tenant := &models.Tenant{
+		TenantID:  uuid.New(),
+		Name:      req.Name,
+		CreatedAt: time.Now(),
+	}
+
+	if err := h.tenantRepo.Create(r.Context(), tenant); err != nil {
+		h.logger.Error("Failed to create tenant", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to create tenant")
+		return
+	}
+
+	response := TenantResponse{
+		TenantID:  tenant.TenantID.String(),
+		Name:      tenant.Name,
+		CreatedAt: tenant.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusCreated, response)
+}
+
+// ListTenants lists all tenants (admin only)
+// @Summary List tenants
+// @Description List all tenants (admin only)
+// @Tags tenants
+// @Accept json
+// @Produce json
+// @Param limit query int false "Limit" default(50)
+// @Param offset query int false "Offset" default(0)
+// @Success 200 {object} ListTenantsResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/tenants [get]
+func (h *TenantHandler) ListTenants(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only admin can list tenants
+	role := auth.GetRole(r.Context())
+	if role != "admin" {
+		respondError(w, http.StatusForbidden, "Only admins can list tenants")
+		return
+	}
+
+	limit := 50
+	offset := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	tenants, err := h.tenantRepo.List(r.Context(), limit, offset)
+	if err != nil {
+		h.logger.Error("Failed to list tenants", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to list tenants")
+		return
+	}
+
+	responses := make([]TenantResponse, len(tenants))
+	for i, tenant := range tenants {
+		responses[i] = TenantResponse{
+			TenantID:  tenant.TenantID.String(),
+			Name:      tenant.Name,
+			CreatedAt: tenant.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	respondJSON(w, http.StatusOK, ListTenantsResponse{
+		Tenants: responses,
+		Limit:   limit,
+		Offset:  offset,
+	})
+}
+
+// GetTenant gets a tenant by ID
+// @Summary Get tenant
+// @Description Get a tenant by ID
+// @Tags tenants
+// @Accept json
+// @Produce json
+// @Param tenantId path string true "Tenant ID" format(uuid)
+// @Success 200 {object} TenantResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/tenants/{tenantId} [get]
+func (h *TenantHandler) GetTenant(w http.ResponseWriter, r *http.Request) {
+	tenantIDStr := chi.URLParam(r, "tenantId")
+	tenantID, err := uuid.Parse(tenantIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid tenant ID")
+		return
+	}
+
+	// Users can view their own tenant, admins can view any tenant
+	currentTenantID := h.getTenantID(r.Context())
+	role := auth.GetRole(r.Context())
+	if currentTenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	currentTenantUUID, _ := uuid.Parse(currentTenantID)
+	if role != "admin" && currentTenantUUID != tenantID {
+		respondError(w, http.StatusForbidden, "You can only view your own tenant")
+		return
+	}
+
+	tenant, err := h.tenantRepo.GetByID(r.Context(), tenantID)
+	if err != nil {
+		h.logger.Error("Failed to get tenant", zap.Error(err))
+		respondError(w, http.StatusNotFound, "Tenant not found")
+		return
+	}
+
+	response := TenantResponse{
+		TenantID:  tenant.TenantID.String(),
+		Name:      tenant.Name,
+		CreatedAt: tenant.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// UpdateTenant updates a tenant (admin only)
+// @Summary Update tenant
+// @Description Update a tenant (admin only)
+// @Tags tenants
+// @Accept json
+// @Produce json
+// @Param tenantId path string true "Tenant ID" format(uuid)
+// @Param tenant body UpdateTenantRequest true "Tenant information"
+// @Success 200 {object} TenantResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/tenants/{tenantId} [put]
+func (h *TenantHandler) UpdateTenant(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only admin can update tenants
+	role := auth.GetRole(r.Context())
+	if role != "admin" {
+		respondError(w, http.StatusForbidden, "Only admins can update tenants")
+		return
+	}
+
+	tenantIDStr := chi.URLParam(r, "tenantId")
+	tenantID, err := uuid.Parse(tenantIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid tenant ID")
+		return
+	}
+
+	var req UpdateTenantRequest
+	if err := ParseJSONRequest(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
+	tenant, err := h.tenantRepo.GetByID(r.Context(), tenantID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Tenant not found")
+		return
+	}
+
+	tenant.Name = req.Name
+
+	if err := h.tenantRepo.Update(r.Context(), tenant); err != nil {
+		h.logger.Error("Failed to update tenant", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to update tenant")
+		return
+	}
+
+	response := TenantResponse{
+		TenantID:  tenant.TenantID.String(),
+		Name:      tenant.Name,
+		CreatedAt: tenant.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// DeleteTenant deletes a tenant (admin only)
+// @Summary Delete tenant
+// @Description Delete a tenant (admin only)
+// @Tags tenants
+// @Accept json
+// @Produce json
+// @Param tenantId path string true "Tenant ID" format(uuid)
+// @Success 204 "No Content"
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/tenants/{tenantId} [delete]
+func (h *TenantHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only admin can delete tenants
+	role := auth.GetRole(r.Context())
+	if role != "admin" {
+		respondError(w, http.StatusForbidden, "Only admins can delete tenants")
+		return
+	}
+
+	tenantIDStr := chi.URLParam(r, "tenantId")
+	tenantID, err := uuid.Parse(tenantIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid tenant ID")
+		return
+	}
+
+	if err := h.tenantRepo.Delete(r.Context(), tenantID); err != nil {
+		h.logger.Error("Failed to delete tenant", zap.Error(err))
+		if err.Error() == "tenant not found" {
+			respondError(w, http.StatusNotFound, "Tenant not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "Failed to delete tenant")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListTenantMembers lists all members of a tenant
+// @Summary List tenant members
+// @Description List all members of a tenant
+// @Tags tenants
+// @Accept json
+// @Produce json
+// @Param tenantId path string true "Tenant ID" format(uuid)
+// @Param limit query int false "Limit" default(50)
+// @Param offset query int false "Offset" default(0)
+// @Success 200 {object} ListMembershipsResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/tenants/{tenantId}/members [get]
+func (h *TenantHandler) ListTenantMembers(w http.ResponseWriter, r *http.Request) {
+	tenantIDStr := chi.URLParam(r, "tenantId")
+	tenantID, err := uuid.Parse(tenantIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid tenant ID")
+		return
+	}
+
+	// Verify user has access to this tenant
+	currentTenantID := h.getTenantID(r.Context())
+	if currentTenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	currentTenantUUID, _ := uuid.Parse(currentTenantID)
+	role := auth.GetRole(r.Context())
+	if role != "admin" && currentTenantUUID != tenantID {
+		respondError(w, http.StatusForbidden, "You can only view members of your own tenant")
+		return
+	}
+
+	limit := 50
+	offset := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	memberships, err := h.tenantRepo.ListMembers(r.Context(), tenantID, limit, offset)
+	if err != nil {
+		h.logger.Error("Failed to list members", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to list members")
+		return
+	}
+
+	responses := make([]MembershipResponse, len(memberships))
+	for i, membership := range memberships {
+		responses[i] = MembershipResponse{
+			MembershipID: membership.MembershipID.String(),
+			TenantID:     membership.TenantID.String(),
+			UserID:       membership.UserID.String(),
+			Role:         membership.Role,
+			CreatedAt:    membership.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	respondJSON(w, http.StatusOK, ListMembershipsResponse{
+		Memberships: responses,
+		Limit:       limit,
+		Offset:      offset,
+	})
+}
+
+// MembershipHandler handles membership-related requests
+type MembershipHandler struct {
+	*Handler
+}
+
+func NewMembershipHandler(db *database.DB, logger *zap.Logger, cfg *config.Config) *MembershipHandler {
+	return &MembershipHandler{Handler: NewHandler(db, logger, cfg)}
+}
+
+// CreateMembership creates a new membership (admin only)
+// @Summary Create membership
+// @Description Add a user to a tenant with a role (admin only)
+// @Tags memberships
+// @Accept json
+// @Produce json
+// @Param membership body CreateMembershipRequest true "Membership information"
+// @Success 201 {object} MembershipResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Failure 409 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/memberships [post]
+func (h *MembershipHandler) CreateMembership(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only admin can create memberships
+	role := auth.GetRole(r.Context())
+	if role != "admin" {
+		respondError(w, http.StatusForbidden, "Only admins can create memberships")
+		return
+	}
+
+	var req CreateMembershipRequest
+	if err := ParseJSONRequest(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	userUUID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	// Verify user exists
+	_, err = h.userRepo.GetByID(r.Context(), userUUID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Check if membership already exists
+	existing, err := h.membershipRepo.GetByUserTenant(r.Context(), userUUID, tenantUUID)
+	if err == nil && existing != nil {
+		respondError(w, http.StatusConflict, "Membership already exists")
+		return
+	}
+
+	membership := &models.Membership{
+		MembershipID: uuid.New(),
+		TenantID:     tenantUUID,
+		UserID:       userUUID,
+		Role:         req.Role,
+		CreatedAt:    time.Now(),
+	}
+
+	if err := h.membershipRepo.Create(r.Context(), membership); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			respondError(w, http.StatusConflict, "Membership already exists")
+			return
+		}
+		h.logger.Error("Failed to create membership", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to create membership")
+		return
+	}
+
+	response := MembershipResponse{
+		MembershipID: membership.MembershipID.String(),
+		TenantID:     membership.TenantID.String(),
+		UserID:       membership.UserID.String(),
+		Role:         membership.Role,
+		CreatedAt:    membership.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusCreated, response)
+}
+
+// ListMemberships lists all memberships for the tenant
+// @Summary List memberships
+// @Description List all memberships for the tenant
+// @Tags memberships
+// @Accept json
+// @Produce json
+// @Param limit query int false "Limit" default(50)
+// @Param offset query int false "Offset" default(0)
+// @Success 200 {object} ListMembershipsResponse
+// @Failure 401 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/memberships [get]
+func (h *MembershipHandler) ListMemberships(w http.ResponseWriter, r *http.Request) {
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+
+	limit := 50
+	offset := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	memberships, err := h.membershipRepo.ListByTenant(r.Context(), tenantUUID, limit, offset)
+	if err != nil {
+		h.logger.Error("Failed to list memberships", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to list memberships")
+		return
+	}
+
+	responses := make([]MembershipResponse, len(memberships))
+	for i, membership := range memberships {
+		responses[i] = MembershipResponse{
+			MembershipID: membership.MembershipID.String(),
+			TenantID:     membership.TenantID.String(),
+			UserID:       membership.UserID.String(),
+			Role:         membership.Role,
+			CreatedAt:    membership.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	respondJSON(w, http.StatusOK, ListMembershipsResponse{
+		Memberships: responses,
+		Limit:       limit,
+		Offset:      offset,
+	})
+}
+
+// GetMembership gets a membership by ID
+// @Summary Get membership
+// @Description Get a membership by ID
+// @Tags memberships
+// @Accept json
+// @Produce json
+// @Param membershipId path string true "Membership ID" format(uuid)
+// @Success 200 {object} MembershipResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/memberships/{membershipId} [get]
+func (h *MembershipHandler) GetMembership(w http.ResponseWriter, r *http.Request) {
+	membershipIDStr := chi.URLParam(r, "membershipId")
+	membershipID, err := uuid.Parse(membershipIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid membership ID")
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	membership, err := h.membershipRepo.GetByID(r.Context(), membershipID, tenantUUID)
+	if err != nil {
+		h.logger.Error("Failed to get membership", zap.Error(err))
+		respondError(w, http.StatusNotFound, "Membership not found")
+		return
+	}
+
+	response := MembershipResponse{
+		MembershipID: membership.MembershipID.String(),
+		TenantID:     membership.TenantID.String(),
+		UserID:       membership.UserID.String(),
+		Role:         membership.Role,
+		CreatedAt:    membership.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// UpdateMembership updates a membership role (admin only)
+// @Summary Update membership
+// @Description Update a membership role (admin only)
+// @Tags memberships
+// @Accept json
+// @Produce json
+// @Param membershipId path string true "Membership ID" format(uuid)
+// @Param membership body UpdateMembershipRequest true "Membership information"
+// @Success 200 {object} MembershipResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/memberships/{membershipId} [put]
+func (h *MembershipHandler) UpdateMembership(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only admin can update memberships
+	role := auth.GetRole(r.Context())
+	if role != "admin" {
+		respondError(w, http.StatusForbidden, "Only admins can update memberships")
+		return
+	}
+
+	membershipIDStr := chi.URLParam(r, "membershipId")
+	membershipID, err := uuid.Parse(membershipIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid membership ID")
+		return
+	}
+
+	var req UpdateMembershipRequest
+	if err := ParseJSONRequest(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	membership, err := h.membershipRepo.GetByID(r.Context(), membershipID, tenantUUID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Membership not found")
+		return
+	}
+
+	membership.Role = req.Role
+
+	if err := h.membershipRepo.Update(r.Context(), membership); err != nil {
+		h.logger.Error("Failed to update membership", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to update membership")
+		return
+	}
+
+	response := MembershipResponse{
+		MembershipID: membership.MembershipID.String(),
+		TenantID:     membership.TenantID.String(),
+		UserID:       membership.UserID.String(),
+		Role:         membership.Role,
+		CreatedAt:    membership.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// DeleteMembership deletes a membership (admin only)
+// @Summary Delete membership
+// @Description Remove a membership (admin only)
+// @Tags memberships
+// @Accept json
+// @Produce json
+// @Param membershipId path string true "Membership ID" format(uuid)
+// @Success 204 "No Content"
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/memberships/{membershipId} [delete]
+func (h *MembershipHandler) DeleteMembership(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only admin can delete memberships
+	role := auth.GetRole(r.Context())
+	if role != "admin" {
+		respondError(w, http.StatusForbidden, "Only admins can delete memberships")
+		return
+	}
+
+	membershipIDStr := chi.URLParam(r, "membershipId")
+	membershipID, err := uuid.Parse(membershipIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid membership ID")
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	if err := h.membershipRepo.Delete(r.Context(), membershipID, tenantUUID); err != nil {
+		h.logger.Error("Failed to delete membership", zap.Error(err))
+		if err.Error() == "membership not found" {
+			respondError(w, http.StatusNotFound, "Membership not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "Failed to delete membership")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Helper functions

@@ -16,6 +16,9 @@ func RegisterRoutes(r chi.Router, db *database.DB, logger *zap.Logger, cfg *conf
 	projectHandler := NewProjectHandler(db, logger, cfg)
 	exportHandler := NewExportHandler(db, logger, cfg)
 	scoringProfileHandler := NewScoringProfileHandler(db, logger, cfg)
+	userHandler := NewUserHandler(db, logger, cfg)
+	tenantHandler := NewTenantHandler(db, logger, cfg)
+	membershipHandler := NewMembershipHandler(db, logger, cfg)
 
 	// Parcel routes
 	r.Route("/parcels", func(r chi.Router) {
@@ -87,6 +90,36 @@ func RegisterRoutes(r chi.Router, db *database.DB, logger *zap.Logger, cfg *conf
 		r.Get("/", favoriteHandler.ListFavorites)
 		r.Get("/{favoriteId}", favoriteHandler.GetFavorite)
 		r.Delete("/{favoriteId}", favoriteHandler.DeleteFavorite)
+	})
+
+	// User routes
+	r.Route("/users", func(r chi.Router) {
+		r.Post("/", userHandler.CreateUser)
+		r.Get("/", userHandler.ListUsers)
+		r.Get("/me", userHandler.GetCurrentUser)
+		r.Put("/me", userHandler.UpdateCurrentUser)
+		r.Get("/{userId}", userHandler.GetUser)
+		r.Put("/{userId}", userHandler.UpdateUser)
+		r.Delete("/{userId}", userHandler.DeleteUser)
+	})
+
+	// Tenant routes
+	r.Route("/tenants", func(r chi.Router) {
+		r.Post("/", tenantHandler.CreateTenant)
+		r.Get("/", tenantHandler.ListTenants)
+		r.Get("/{tenantId}", tenantHandler.GetTenant)
+		r.Put("/{tenantId}", tenantHandler.UpdateTenant)
+		r.Delete("/{tenantId}", tenantHandler.DeleteTenant)
+		r.Get("/{tenantId}/members", tenantHandler.ListTenantMembers)
+	})
+
+	// Membership routes
+	r.Route("/memberships", func(r chi.Router) {
+		r.Post("/", membershipHandler.CreateMembership)
+		r.Get("/", membershipHandler.ListMemberships)
+		r.Get("/{membershipId}", membershipHandler.GetMembership)
+		r.Put("/{membershipId}", membershipHandler.UpdateMembership)
+		r.Delete("/{membershipId}", membershipHandler.DeleteMembership)
 	})
 }
 

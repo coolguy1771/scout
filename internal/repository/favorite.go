@@ -135,4 +135,3 @@ func (r *FavoriteRepository) CountByUser(ctx context.Context, userID uuid.UUID, 
 	}
 	return count, nil
 }
-

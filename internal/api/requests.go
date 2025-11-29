@@ -78,6 +78,39 @@ type CreateFavoriteRequest struct {
 	ParcelID string `json:"parcelId" validate:"required,uuid"`
 }
 
+// CreateUserRequest represents a request to create a user
+type CreateUserRequest struct {
+	Email string `json:"email" validate:"required,email"`
+	Name  string `json:"name" validate:"required,min=1,max=255"`
+}
+
+// UpdateUserRequest represents a request to update a user
+type UpdateUserRequest struct {
+	Email string `json:"email" validate:"required,email"`
+	Name  string `json:"name" validate:"required,min=1,max=255"`
+}
+
+// CreateTenantRequest represents a request to create a tenant
+type CreateTenantRequest struct {
+	Name string `json:"name" validate:"required,min=1,max=255"`
+}
+
+// UpdateTenantRequest represents a request to update a tenant
+type UpdateTenantRequest struct {
+	Name string `json:"name" validate:"required,min=1,max=255"`
+}
+
+// CreateMembershipRequest represents a request to create a membership
+type CreateMembershipRequest struct {
+	UserID string `json:"userId" validate:"required,uuid"`
+	Role   string `json:"role" validate:"required,oneof=viewer analyst admin"`
+}
+
+// UpdateMembershipRequest represents a request to update a membership
+type UpdateMembershipRequest struct {
+	Role string `json:"role" validate:"required,oneof=viewer analyst admin"`
+}
+
 // ValidateRequest validates a request struct
 func ValidateRequest(v interface{}) error {
 	return validate.Struct(v)

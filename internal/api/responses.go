@@ -98,4 +98,52 @@ type ListFavoritesResponse struct {
 	Offset    int                 `json:"offset"`
 }
 
+// UserResponse represents a user response
+type UserResponse struct {
+	UserID    string `json:"userId"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// TenantResponse represents a tenant response
+type TenantResponse struct {
+	TenantID  string `json:"tenantId"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// MembershipResponse represents a membership response
+type MembershipResponse struct {
+	MembershipID string `json:"membershipId"`
+	TenantID     string `json:"tenantId"`
+	UserID       string `json:"userId"`
+	Role         string `json:"role"`
+	CreatedAt    string `json:"createdAt"`
+}
+
+// ListUsersResponse represents a paginated list of users
+type ListUsersResponse struct {
+	Users  []UserResponse `json:"users"`
+	Total  int            `json:"total,omitempty"`
+	Limit  int            `json:"limit"`
+	Offset int            `json:"offset"`
+}
+
+// ListTenantsResponse represents a paginated list of tenants
+type ListTenantsResponse struct {
+	Tenants []TenantResponse `json:"tenants"`
+	Total   int              `json:"total,omitempty"`
+	Limit   int              `json:"limit"`
+	Offset  int              `json:"offset"`
+}
+
+// ListMembershipsResponse represents a paginated list of memberships
+type ListMembershipsResponse struct {
+	Memberships []MembershipResponse `json:"memberships"`
+	Total       int                   `json:"total,omitempty"`
+	Limit       int                   `json:"limit"`
+	Offset      int                   `json:"offset"`
+}
+
 
