@@ -21,6 +21,7 @@ func RegisterRoutes(r chi.Router, db *database.DB, logger *zap.Logger, cfg *conf
 	r.Route("/parcels", func(r chi.Router) {
 		r.Get("/{parcelId}", parcelHandler.GetParcel)
 		r.Get("/{parcelId}/nearby", parcelHandler.GetNearby)
+		r.Get("/{parcelId}/favorites", parcelHandler.CheckParcelFavorite)
 	})
 
 	// Search routes
@@ -77,6 +78,15 @@ func RegisterRoutes(r chi.Router, db *database.DB, logger *zap.Logger, cfg *conf
 		r.Get("/{scoringProfileId}", scoringProfileHandler.GetScoringProfile)
 		r.Put("/{scoringProfileId}", scoringProfileHandler.UpdateScoringProfile)
 		r.Delete("/{scoringProfileId}", scoringProfileHandler.DeleteScoringProfile)
+	})
+
+	// Favorite routes
+	favoriteHandler := NewFavoriteHandler(db, logger, cfg)
+	r.Route("/favorites", func(r chi.Router) {
+		r.Post("/", favoriteHandler.CreateFavorite)
+		r.Get("/", favoriteHandler.ListFavorites)
+		r.Get("/{favoriteId}", favoriteHandler.GetFavorite)
+		r.Delete("/{favoriteId}", favoriteHandler.DeleteFavorite)
 	})
 }
 

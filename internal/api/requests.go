@@ -73,6 +73,11 @@ type UpdateScoringProfileRequest struct {
 	Version             *int            `json:"version,omitempty"`
 }
 
+// CreateFavoriteRequest represents a request to create a favorite
+type CreateFavoriteRequest struct {
+	ParcelID string `json:"parcelId" validate:"required,uuid"`
+}
+
 // ValidateRequest validates a request struct
 func ValidateRequest(v interface{}) error {
 	return validate.Struct(v)

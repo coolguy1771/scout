@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -33,6 +34,7 @@ type Handler struct {
 	jobRepo            *repository.JobRepository
 	exportRepo         *repository.ExportRepository
 	scoringProfileRepo *repository.ScoringProfileRepository
+	favoriteRepo       *repository.FavoriteRepository
 	searchService      *search.SearchService
 	scoringService     *scoring.Service
 	tileStorage        *storage.TileStorage
@@ -46,6 +48,7 @@ func NewHandler(db *database.DB, logger *zap.Logger, cfg *config.Config) *Handle
 	jobRepo := repository.NewJobRepository(db.DB, logger)
 	exportRepo := repository.NewExportRepository(db.DB, logger)
 	scoringProfileRepo := repository.NewScoringProfileRepository(db.DB, logger)
+	favoriteRepo := repository.NewFavoriteRepository(db.DB, logger)
 
 	scoringService := scoring.NewService(scoringProfileRepo, logger)
 	searchService := search.NewSearchService(parcelRepo, parcelFeatureRepo, scoringService, cfg, logger)
@@ -65,6 +68,7 @@ func NewHandler(db *database.DB, logger *zap.Logger, cfg *config.Config) *Handle
 		jobRepo:            jobRepo,
 		exportRepo:         exportRepo,
 		scoringProfileRepo: scoringProfileRepo,
+		favoriteRepo:       favoriteRepo,
 		searchService:      searchService,
 		scoringService:     scoringService,
 		tileStorage:        tileStorage,
@@ -151,6 +155,21 @@ func (h *ParcelHandler) GetParcel(w http.ResponseWriter, r *http.Request) {
 		}
 		if features.DistToSubstationM > 0 {
 			response.Features.DistToSubstationM = &features.DistToSubstationM
+		}
+	}
+
+	// Check if parcel is favorited by current user (optional)
+	userID := h.getUserID(r.Context())
+	if userID != "" && tenantID != "" {
+		userUUID, err := uuid.Parse(userID)
+		if err == nil {
+			tenantUUID, err := uuid.Parse(tenantID)
+			if err == nil {
+				exists, err := h.favoriteRepo.Exists(r.Context(), userUUID, parcelID, tenantUUID)
+				if err == nil {
+					response.IsFavorited = &exists
+				}
+			}
 		}
 	}
 
@@ -1579,6 +1598,442 @@ func (h *ScoringProfileHandler) DeleteScoringProfile(w http.ResponseWriter, r *h
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// FavoriteHandler handles favorite-related requests
+type FavoriteHandler struct {
+	*Handler
+}
+
+func NewFavoriteHandler(db *database.DB, logger *zap.Logger, cfg *config.Config) *FavoriteHandler {
+	return &FavoriteHandler{Handler: NewHandler(db, logger, cfg)}
+}
+
+// CreateFavorite creates a new favorite
+// @Summary Create favorite
+// @Description Add a parcel to favorites
+// @Tags favorites
+// @Accept json
+// @Produce json
+// @Param favorite body CreateFavoriteRequest true "Favorite information"
+// @Success 201 {object} FavoriteResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Failure 409 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/favorites [post]
+func (h *FavoriteHandler) CreateFavorite(w http.ResponseWriter, r *http.Request) {
+	var req CreateFavoriteRequest
+	if err := ParseJSONRequest(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	userID := h.getUserID(r.Context())
+	if tenantID == "" || userID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant or user ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	userUUID, _ := uuid.Parse(userID)
+	parcelUUID, err := uuid.Parse(req.ParcelID)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid parcel ID")
+		return
+	}
+
+	// Validate parcel exists and user has access
+	var tenantUUIDPtr *uuid.UUID
+	if tenantID != "" {
+		tenantUUIDPtr = &tenantUUID
+	}
+	parcel, err := h.parcelRepo.GetByID(r.Context(), parcelUUID, tenantUUIDPtr)
+	if err != nil {
+		h.logger.Error("Failed to get parcel", zap.Error(err))
+		respondError(w, http.StatusNotFound, "Parcel not found")
+		return
+	}
+
+	// Check if favorite already exists
+	exists, err := h.favoriteRepo.Exists(r.Context(), userUUID, parcelUUID, tenantUUID)
+	if err != nil {
+		h.logger.Error("Failed to check favorite existence", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to check favorite")
+		return
+	}
+	if exists {
+		respondError(w, http.StatusConflict, "Parcel is already favorited")
+		return
+	}
+
+	// Create favorite
+	favorite := &models.Favorite{
+		FavoriteID: uuid.New(),
+		TenantID:   tenantUUID,
+		UserID:     userUUID,
+		ParcelID:   parcelUUID,
+		CreatedAt:  time.Now(),
+	}
+
+	if err := h.favoriteRepo.Create(r.Context(), favorite); err != nil {
+		// Check if it's a duplicate constraint error
+		if strings.Contains(err.Error(), "favorite already exists") {
+			respondError(w, http.StatusConflict, "Parcel is already favorited")
+			return
+		}
+		h.logger.Error("Failed to create favorite", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to create favorite")
+		return
+	}
+
+	// Get parcel features for response
+	features, _ := h.parcelFeatureRepo.GetByParcelID(r.Context(), parcelUUID)
+
+	parcelResponse := ParcelResponse{
+		ParcelID:     parcel.ParcelID.String(),
+		APN:          parcel.APN,
+		Acres:        parcel.Acres,
+		ZoningRaw:    parcel.ZoningRaw,
+		ZoningTags:   parcel.ZoningTags,
+		Jurisdiction: parcel.Jurisdiction,
+		StateFips:    parcel.StateFIPS,
+	}
+
+	if features != nil {
+		parcelResponse.Features = &ParcelFeatureResponse{
+			InFloodplain:    features.InFloodplain,
+			InWetlands:      features.InWetlands,
+			InProtectedLand: features.InProtectedLand,
+		}
+		if features.DistToHighwayM > 0 {
+			parcelResponse.Features.DistToHighwayM = &features.DistToHighwayM
+		}
+		if features.DistToRailM > 0 {
+			parcelResponse.Features.DistToRailM = &features.DistToRailM
+		}
+		if features.DistToAirportM > 0 {
+			parcelResponse.Features.DistToAirportM = &features.DistToAirportM
+		}
+		if features.DistToPowerLineM > 0 {
+			parcelResponse.Features.DistToPowerLineM = &features.DistToPowerLineM
+		}
+		if features.DistToSubstationM > 0 {
+			parcelResponse.Features.DistToSubstationM = &features.DistToSubstationM
+		}
+	}
+
+	response := FavoriteResponse{
+		FavoriteID: favorite.FavoriteID.String(),
+		ParcelID:   favorite.ParcelID.String(),
+		Parcel:     parcelResponse,
+		CreatedAt:  favorite.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusCreated, response)
+}
+
+// ListFavorites lists all favorites for the current user
+// @Summary List favorites
+// @Description List all favorites for the current user with pagination
+// @Tags favorites
+// @Accept json
+// @Produce json
+// @Param limit query int false "Limit" default(50)
+// @Param offset query int false "Offset" default(0)
+// @Success 200 {object} ListFavoritesResponse
+// @Failure 401 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/favorites [get]
+func (h *FavoriteHandler) ListFavorites(w http.ResponseWriter, r *http.Request) {
+	tenantID := h.getTenantID(r.Context())
+	userID := h.getUserID(r.Context())
+	if tenantID == "" || userID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant or user ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	userUUID, _ := uuid.Parse(userID)
+
+	limit := 50
+	offset := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	favorites, err := h.favoriteRepo.ListByUser(r.Context(), userUUID, tenantUUID, limit, offset)
+	if err != nil {
+		h.logger.Error("Failed to list favorites", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to list favorites")
+		return
+	}
+
+	// Get total count
+	total, err := h.favoriteRepo.CountByUser(r.Context(), userUUID, tenantUUID)
+	if err != nil {
+		h.logger.Error("Failed to count favorites", zap.Error(err))
+		// Continue without total count
+		total = len(favorites)
+	}
+
+	// Build response with parcel details
+	responses := make([]FavoriteResponse, 0, len(favorites))
+	for _, favorite := range favorites {
+		// Get parcel details
+		var tenantUUIDPtr *uuid.UUID
+		if tenantID != "" {
+			tenantUUIDPtr = &tenantUUID
+		}
+		parcel, err := h.parcelRepo.GetByID(r.Context(), favorite.ParcelID, tenantUUIDPtr)
+		if err != nil {
+			h.logger.Warn("Failed to get parcel for favorite", zap.String("parcelId", favorite.ParcelID.String()), zap.Error(err))
+			continue
+		}
+
+		// Get parcel features
+		features, _ := h.parcelFeatureRepo.GetByParcelID(r.Context(), favorite.ParcelID)
+
+		parcelResponse := ParcelResponse{
+			ParcelID:     parcel.ParcelID.String(),
+			APN:          parcel.APN,
+			Acres:        parcel.Acres,
+			ZoningRaw:    parcel.ZoningRaw,
+			ZoningTags:   parcel.ZoningTags,
+			Jurisdiction: parcel.Jurisdiction,
+			StateFips:    parcel.StateFIPS,
+		}
+
+		if features != nil {
+			parcelResponse.Features = &ParcelFeatureResponse{
+				InFloodplain:    features.InFloodplain,
+				InWetlands:      features.InWetlands,
+				InProtectedLand: features.InProtectedLand,
+			}
+			if features.DistToHighwayM > 0 {
+				parcelResponse.Features.DistToHighwayM = &features.DistToHighwayM
+			}
+			if features.DistToRailM > 0 {
+				parcelResponse.Features.DistToRailM = &features.DistToRailM
+			}
+			if features.DistToAirportM > 0 {
+				parcelResponse.Features.DistToAirportM = &features.DistToAirportM
+			}
+			if features.DistToPowerLineM > 0 {
+				parcelResponse.Features.DistToPowerLineM = &features.DistToPowerLineM
+			}
+			if features.DistToSubstationM > 0 {
+				parcelResponse.Features.DistToSubstationM = &features.DistToSubstationM
+			}
+		}
+
+		responses = append(responses, FavoriteResponse{
+			FavoriteID: favorite.FavoriteID.String(),
+			ParcelID:   favorite.ParcelID.String(),
+			Parcel:     parcelResponse,
+			CreatedAt:  favorite.CreatedAt.Format(time.RFC3339),
+		})
+	}
+
+	respondJSON(w, http.StatusOK, ListFavoritesResponse{
+		Favorites: responses,
+		Total:     total,
+		Limit:     limit,
+		Offset:    offset,
+	})
+}
+
+// GetFavorite gets a favorite by ID
+// @Summary Get favorite
+// @Description Get a favorite by ID
+// @Tags favorites
+// @Accept json
+// @Produce json
+// @Param favoriteId path string true "Favorite ID" format(uuid)
+// @Success 200 {object} FavoriteResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/favorites/{favoriteId} [get]
+func (h *FavoriteHandler) GetFavorite(w http.ResponseWriter, r *http.Request) {
+	favoriteIDStr := chi.URLParam(r, "favoriteId")
+	favoriteID, err := uuid.Parse(favoriteIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid favorite ID")
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	favorite, err := h.favoriteRepo.GetByID(r.Context(), favoriteID, tenantUUID)
+	if err != nil {
+		h.logger.Error("Failed to get favorite", zap.Error(err))
+		respondError(w, http.StatusNotFound, "Favorite not found")
+		return
+	}
+
+	// Get parcel details
+	var tenantUUIDPtr *uuid.UUID
+	if tenantID != "" {
+		tenantUUIDPtr = &tenantUUID
+	}
+	parcel, err := h.parcelRepo.GetByID(r.Context(), favorite.ParcelID, tenantUUIDPtr)
+	if err != nil {
+		h.logger.Error("Failed to get parcel", zap.Error(err))
+		respondError(w, http.StatusNotFound, "Parcel not found")
+		return
+	}
+
+	// Get parcel features
+	features, _ := h.parcelFeatureRepo.GetByParcelID(r.Context(), favorite.ParcelID)
+
+	parcelResponse := ParcelResponse{
+		ParcelID:     parcel.ParcelID.String(),
+		APN:          parcel.APN,
+		Acres:        parcel.Acres,
+		ZoningRaw:    parcel.ZoningRaw,
+		ZoningTags:   parcel.ZoningTags,
+		Jurisdiction: parcel.Jurisdiction,
+		StateFips:    parcel.StateFIPS,
+	}
+
+	if features != nil {
+		parcelResponse.Features = &ParcelFeatureResponse{
+			InFloodplain:    features.InFloodplain,
+			InWetlands:      features.InWetlands,
+			InProtectedLand: features.InProtectedLand,
+		}
+		if features.DistToHighwayM > 0 {
+			parcelResponse.Features.DistToHighwayM = &features.DistToHighwayM
+		}
+		if features.DistToRailM > 0 {
+			parcelResponse.Features.DistToRailM = &features.DistToRailM
+		}
+		if features.DistToAirportM > 0 {
+			parcelResponse.Features.DistToAirportM = &features.DistToAirportM
+		}
+		if features.DistToPowerLineM > 0 {
+			parcelResponse.Features.DistToPowerLineM = &features.DistToPowerLineM
+		}
+		if features.DistToSubstationM > 0 {
+			parcelResponse.Features.DistToSubstationM = &features.DistToSubstationM
+		}
+	}
+
+	response := FavoriteResponse{
+		FavoriteID: favorite.FavoriteID.String(),
+		ParcelID:   favorite.ParcelID.String(),
+		Parcel:     parcelResponse,
+		CreatedAt:  favorite.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// DeleteFavorite deletes a favorite
+// @Summary Delete favorite
+// @Description Remove a favorite
+// @Tags favorites
+// @Accept json
+// @Produce json
+// @Param favoriteId path string true "Favorite ID" format(uuid)
+// @Success 204 "No Content"
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/favorites/{favoriteId} [delete]
+func (h *FavoriteHandler) DeleteFavorite(w http.ResponseWriter, r *http.Request) {
+	favoriteIDStr := chi.URLParam(r, "favoriteId")
+	favoriteID, err := uuid.Parse(favoriteIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid favorite ID")
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	if err := h.favoriteRepo.Delete(r.Context(), favoriteID, tenantUUID); err != nil {
+		h.logger.Error("Failed to delete favorite", zap.Error(err))
+		if err.Error() == "favorite not found" {
+			respondError(w, http.StatusNotFound, "Favorite not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "Failed to delete favorite")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// CheckParcelFavorite checks if a parcel is favorited by the current user
+// @Summary Check parcel favorite
+// @Description Check if the current user has favorited a parcel
+// @Tags parcels
+// @Accept json
+// @Produce json
+// @Param parcelId path string true "Parcel ID" format(uuid)
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/parcels/{parcelId}/favorites [get]
+func (h *ParcelHandler) CheckParcelFavorite(w http.ResponseWriter, r *http.Request) {
+	parcelIDStr := chi.URLParam(r, "parcelId")
+	parcelID, err := uuid.Parse(parcelIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid parcel ID")
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	userID := h.getUserID(r.Context())
+	if tenantID == "" || userID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant or user ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	userUUID, _ := uuid.Parse(userID)
+
+	exists, err := h.favoriteRepo.Exists(r.Context(), userUUID, parcelID, tenantUUID)
+	if err != nil {
+		h.logger.Error("Failed to check favorite", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to check favorite")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]bool{"isFavorited": exists})
 }
 
 // Helper functions

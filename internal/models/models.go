@@ -137,3 +137,12 @@ type PrivateLayer struct {
 	CreatedAt    time.Time  `db:"created_at" json:"createdAt"`
 	UpdatedAt    time.Time  `db:"updated_at" json:"updatedAt"`
 }
+
+// Favorite represents a user's favorite/bookmarked parcel
+type Favorite struct {
+	FavoriteID uuid.UUID `db:"favorite_id" json:"favoriteId"`
+	TenantID   uuid.UUID `db:"tenant_id" json:"tenantId"`
+	UserID     uuid.UUID `db:"user_id" json:"userId"`
+	ParcelID   uuid.UUID `db:"parcel_id" json:"parcelId"`
+	CreatedAt  time.Time `db:"created_at" json:"createdAt"`
+}

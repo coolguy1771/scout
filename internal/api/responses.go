@@ -16,6 +16,7 @@ type ParcelResponse struct {
 	Jurisdiction string                 `json:"jurisdiction,omitempty"`
 	StateFips    string                 `json:"stateFips"`
 	Features     *ParcelFeatureResponse `json:"features,omitempty"`
+	IsFavorited  *bool                  `json:"isFavorited,omitempty"`
 }
 
 // ParcelFeatureResponse represents parcel features
@@ -79,6 +80,22 @@ type ScoringProfileResponse struct {
 	HardConstraints  map[string]interface{} `json:"hardConstraints,omitempty"`
 	CreatedBy        string                 `json:"createdBy"`
 	CreatedAt        string                 `json:"createdAt"`
+}
+
+// FavoriteResponse represents a favorite response with parcel summary
+type FavoriteResponse struct {
+	FavoriteID string          `json:"favoriteId"`
+	ParcelID   string          `json:"parcelId"`
+	Parcel     ParcelResponse  `json:"parcel"`
+	CreatedAt  string          `json:"createdAt"`
+}
+
+// ListFavoritesResponse represents a paginated list of favorites
+type ListFavoritesResponse struct {
+	Favorites []FavoriteResponse `json:"favorites"`
+	Total     int                 `json:"total"`
+	Limit     int                 `json:"limit"`
+	Offset    int                 `json:"offset"`
 }
 
 
