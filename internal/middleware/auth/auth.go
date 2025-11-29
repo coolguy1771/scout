@@ -8,9 +8,17 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"go.uber.org/zap"
 
 	"github.com/coolguy1771/scout/internal/config"
 )
+
+var authLogger *zap.Logger
+
+// SetAuthLogger sets the logger for auth middleware debugging
+func SetAuthLogger(logger *zap.Logger) {
+	authLogger = logger
+}
 
 type contextKey string
 
@@ -32,17 +40,42 @@ type Claims struct {
 func Middleware(cfg config.JWTConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Extract token from Authorization header
+			var tokenString string
+
+			// Try to get token from Authorization header first
 			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				http.Error(w, "Unauthorized: missing Authorization header", http.StatusUnauthorized)
-				return
+			if authHeader != "" {
+				// Remove "Bearer " prefix
+				tokenString = strings.TrimPrefix(authHeader, "Bearer ")
+				if tokenString == authHeader {
+					// Invalid format, but continue to check cookie
+					tokenString = ""
+				}
 			}
 
-			// Remove "Bearer " prefix
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			if tokenString == authHeader {
-				http.Error(w, "Unauthorized: invalid Authorization header format", http.StatusUnauthorized)
+			// If no token in header, try cookie
+			if tokenString == "" {
+				cookie, err := r.Cookie("scout_token")
+				if err == nil && cookie.Value != "" {
+					tokenString = cookie.Value
+				}
+			}
+
+			// If still no token, return error
+			if tokenString == "" {
+				if authLogger != nil {
+					_, hasCookie := r.Cookie("scout_token")
+					authLogger.Debug("No token found",
+						zap.String("path", r.URL.Path),
+						zap.Bool("hasAuthHeader", authHeader != ""),
+						zap.Bool("hasCookie", hasCookie == nil))
+				}
+				// For web routes, redirect to login
+				if r.URL.Path == "/" || !strings.HasPrefix(r.URL.Path, "/api/") {
+					http.Redirect(w, r, "/login", http.StatusSeeOther)
+					return
+				}
+				http.Error(w, "Unauthorized: missing token", http.StatusUnauthorized)
 				return
 			}
 
@@ -57,17 +90,45 @@ func Middleware(cfg config.JWTConfig) func(http.Handler) http.Handler {
 			})
 
 			if err != nil {
+				// Log the error for debugging
+				if authLogger != nil {
+					authLogger.Warn("JWT validation failed",
+						zap.String("path", r.URL.Path),
+						zap.Error(err))
+				}
+				if r.URL.Path == "/" {
+					// For root path, redirect to login instead of showing error
+					http.Redirect(w, r, "/login", http.StatusSeeOther)
+					return
+				}
 				http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
 				return
 			}
 
 			if !token.Valid {
+				if authLogger != nil {
+					authLogger.Warn("JWT token is not valid", zap.String("path", r.URL.Path))
+				}
+				if r.URL.Path == "/" {
+					http.Redirect(w, r, "/login", http.StatusSeeOther)
+					return
+				}
 				http.Error(w, "Unauthorized: token is not valid", http.StatusUnauthorized)
 				return
 			}
 
 			// Validate issuer if configured
 			if cfg.Issuer != "" && claims.Issuer != cfg.Issuer {
+				if authLogger != nil {
+					authLogger.Warn("JWT issuer mismatch",
+						zap.String("path", r.URL.Path),
+						zap.String("expected", cfg.Issuer),
+						zap.String("got", claims.Issuer))
+				}
+				if r.URL.Path == "/" {
+					http.Redirect(w, r, "/login", http.StatusSeeOther)
+					return
+				}
 				http.Error(w, "Unauthorized: invalid token issuer", http.StatusUnauthorized)
 				return
 			}

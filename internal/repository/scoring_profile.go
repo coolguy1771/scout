@@ -69,3 +69,48 @@ func (r *ScoringProfileRepository) ListByTenant(ctx context.Context, tenantID uu
 	}
 	return profiles, nil
 }
+
+// Update updates a scoring profile
+func (r *ScoringProfileRepository) Update(ctx context.Context, profile *models.ScoringProfile) error {
+	query := `
+		UPDATE scoring_profiles
+		SET name = :name,
+		    version = :version,
+		    weights_json = :weights_json,
+		    thresholds_json = :thresholds_json,
+		    hard_constraints_json = :hard_constraints_json
+		WHERE scoring_profile_id = :scoring_profile_id AND tenant_id = :tenant_id
+	`
+	result, err := r.db.NamedExecContext(ctx, query, profile)
+	if err != nil {
+		return fmt.Errorf("failed to update scoring profile: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("scoring profile not found")
+	}
+	return nil
+}
+
+// Delete deletes a scoring profile
+func (r *ScoringProfileRepository) Delete(ctx context.Context, profileID uuid.UUID, tenantID uuid.UUID) error {
+	result, err := r.db.ExecContext(ctx, `
+		DELETE FROM scoring_profiles
+		WHERE scoring_profile_id = $1 AND tenant_id = $2
+	`, profileID, tenantID)
+	if err != nil {
+		return fmt.Errorf("failed to delete scoring profile: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("scoring profile not found")
+	}
+	return nil
+}
+

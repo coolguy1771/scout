@@ -22,6 +22,11 @@ import (
 	"github.com/coolguy1771/scout/internal/database"
 	"github.com/coolguy1771/scout/internal/middleware/auth"
 	"github.com/coolguy1771/scout/internal/middleware/logging"
+	"github.com/coolguy1771/scout/internal/middleware/metrics"
+	"github.com/coolguy1771/scout/internal/middleware/ratelimit"
+	"github.com/coolguy1771/scout/internal/search/opensearch"
+	"github.com/coolguy1771/scout/internal/storage"
+	"github.com/coolguy1771/scout/internal/web"
 )
 
 var apiCmd = &cobra.Command{
@@ -67,12 +72,31 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	}
 	defer db.Close()
 
+	// Initialize OpenSearch client (optional)
+	var searchClient *opensearch.Client
+	if cfg.Search.Enabled {
+		searchClient, err = opensearch.NewClient(&cfg.Search, logger)
+		if err != nil {
+			logger.Warn("Failed to initialize OpenSearch client", zap.Error(err))
+		}
+	}
+
+	// Initialize S3 storage (optional)
+	var s3Storage *storage.S3Storage
+	if cfg.S3.AccessKeyID != "" && cfg.S3.SecretAccessKey != "" {
+		s3Storage, err = storage.NewS3Storage(cfg.S3, logger)
+		if err != nil {
+			logger.Warn("Failed to initialize S3 storage", zap.Error(err))
+		}
+	}
+
 	// Initialize router
 	r := chi.NewRouter()
 
 	// Middleware
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
+	r.Use(metrics.Middleware) // Metrics must be before logging to capture all requests
 	r.Use(logging.Middleware(logger))
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
@@ -88,16 +112,42 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	}
 	r.Use(cors.Handler(corsOptions))
 
-	// Health check
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
+	// Rate limiting (if enabled)
+	if cfg.API.RateLimit.Enabled {
+		limiter := ratelimit.NewRateLimiter(
+			cfg.API.RateLimit.GlobalLimit,
+			cfg.API.RateLimit.TenantLimit,
+			cfg.API.RateLimit.Burst,
+		)
+		r.Use(limiter.Middleware)
+	}
+
+	// Cookie middleware for web UI (converts cookie to Authorization header)
+	// This is safe to apply globally as it only adds headers if cookies exist
+	auth.SetCookieLogger(logger)
+	auth.SetAuthLogger(logger)
+	r.Use(auth.CookieMiddleware(cfg.JWT))
+
+	// Health check endpoints
+	healthHandler := api.NewHealthHandler(db, searchClient, s3Storage, cfg, logger)
+	r.Get("/health", healthHandler.Health)
+	r.Get("/health/live", healthHandler.Live)
+	r.Get("/health/ready", healthHandler.Ready)
+
+	// Metrics endpoint
+	r.Handle("/metrics", metrics.Handler())
 
 	// Swagger UI
 	r.Get("/swagger/*", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
 	))
+
+	// Static files (CSS, JS, etc.)
+	workDir, _ := os.Getwd()
+	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir(workDir+"/web/static"))))
+
+	// Web UI routes (must be before API routes to catch root path)
+	web.RegisterWebRoutes(r, logger, cfg)
 
 	// API routes
 	r.Route("/api", func(r chi.Router) {

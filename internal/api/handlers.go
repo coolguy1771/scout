@@ -339,6 +339,16 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
 	tenantID := h.getTenantID(r.Context())
 	userID := h.getUserID(r.Context())
 	if tenantID == "" || userID == "" {
@@ -464,6 +474,16 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
 	tenantID := h.getTenantID(r.Context())
 	if tenantID == "" {
 		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
@@ -528,6 +548,16 @@ func (h *ProjectHandler) CreateSavedSearch(w http.ResponseWriter, r *http.Reques
 	var req CreateSavedSearchRequest
 	if err := ParseJSONRequest(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
 		return
 	}
 
@@ -687,6 +717,16 @@ func (h *ProjectHandler) UpdateSavedSearch(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
 	tenantID := h.getTenantID(r.Context())
 	if tenantID == "" {
 		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
@@ -790,6 +830,16 @@ func (h *ExportHandler) CreateExport(w http.ResponseWriter, r *http.Request) {
 	var req CreateExportRequest
 	if err := ParseJSONRequest(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
 		return
 	}
 
@@ -1091,6 +1141,444 @@ func (h *TileHandler) GetTile(w http.ResponseWriter, r *http.Request) {
 
 	// Tile not found
 	http.NotFound(w, r)
+}
+
+// ScoringProfileHandler handles scoring profile requests
+type ScoringProfileHandler struct {
+	*Handler
+}
+
+func NewScoringProfileHandler(db *database.DB, logger *zap.Logger, cfg *config.Config) *ScoringProfileHandler {
+	return &ScoringProfileHandler{Handler: NewHandler(db, logger, cfg)}
+}
+
+// CreateScoringProfile creates a new scoring profile
+// @Summary Create scoring profile
+// @Description Create a new scoring profile for the tenant
+// @Tags scoringProfiles
+// @Accept json
+// @Produce json
+// @Param profile body CreateScoringProfileRequest true "Scoring profile information"
+// @Success 201 {object} ScoringProfileResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/scoringProfiles [post]
+func (h *ScoringProfileHandler) CreateScoringProfile(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only analyst and admin can create
+	role := auth.GetRole(r.Context())
+	if role != "analyst" && role != "admin" {
+		respondError(w, http.StatusForbidden, "Only analysts and admins can create scoring profiles")
+		return
+	}
+
+	var req CreateScoringProfileRequest
+	if err := ParseJSONRequest(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
+	// Validate weights JSON structure
+	if _, err := scoring.ParseProfile(string(req.WeightsJSON)); err != nil {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid weights JSON: %v", err))
+		return
+	}
+
+	// Validate thresholds JSON if provided
+	if len(req.ThresholdsJSON) > 0 {
+		var thresholds map[string]interface{}
+		if err := json.Unmarshal(req.ThresholdsJSON, &thresholds); err != nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid thresholds JSON: %v", err))
+			return
+		}
+	}
+
+	// Validate hard constraints JSON if provided
+	if len(req.HardConstraintsJSON) > 0 {
+		var constraints map[string]interface{}
+		if err := json.Unmarshal(req.HardConstraintsJSON, &constraints); err != nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid hard constraints JSON: %v", err))
+			return
+		}
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	userID := h.getUserID(r.Context())
+	if tenantID == "" || userID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant or user ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	userUUID, _ := uuid.Parse(userID)
+
+	version := 1
+	if req.Version != nil {
+		version = *req.Version
+	}
+
+	profile := &models.ScoringProfile{
+		ScoringProfileID:    uuid.New(),
+		TenantID:            tenantUUID,
+		Name:                req.Name,
+		Version:             version,
+		WeightsJSON:         string(req.WeightsJSON),
+		ThresholdsJSON:      string(req.ThresholdsJSON),
+		HardConstraintsJSON: string(req.HardConstraintsJSON),
+		CreatedBy:           userUUID,
+		CreatedAt:           time.Now(),
+	}
+
+	if err := h.scoringProfileRepo.Create(r.Context(), profile); err != nil {
+		h.logger.Error("Failed to create scoring profile", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to create scoring profile")
+		return
+	}
+
+	// Parse JSON fields for response
+	var weights map[string]float64
+	json.Unmarshal(req.WeightsJSON, &weights)
+
+	var thresholds map[string]interface{}
+	if len(req.ThresholdsJSON) > 0 {
+		json.Unmarshal(req.ThresholdsJSON, &thresholds)
+	}
+
+	var constraints map[string]interface{}
+	if len(req.HardConstraintsJSON) > 0 {
+		json.Unmarshal(req.HardConstraintsJSON, &constraints)
+	}
+
+	response := ScoringProfileResponse{
+		ScoringProfileID: profile.ScoringProfileID.String(),
+		TenantID:         profile.TenantID.String(),
+		Name:             profile.Name,
+		Version:          profile.Version,
+		Weights:          weights,
+		Thresholds:      thresholds,
+		HardConstraints: constraints,
+		CreatedBy:        profile.CreatedBy.String(),
+		CreatedAt:        profile.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusCreated, response)
+}
+
+// ListScoringProfiles lists all scoring profiles for the tenant
+// @Summary List scoring profiles
+// @Description List all scoring profiles for the tenant
+// @Tags scoringProfiles
+// @Accept json
+// @Produce json
+// @Success 200 {array} ScoringProfileResponse
+// @Failure 401 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/scoringProfiles [get]
+func (h *ScoringProfileHandler) ListScoringProfiles(w http.ResponseWriter, r *http.Request) {
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	profiles, err := h.scoringProfileRepo.ListByTenant(r.Context(), tenantUUID)
+	if err != nil {
+		h.logger.Error("Failed to list scoring profiles", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to list scoring profiles")
+		return
+	}
+
+	// Ensure we return an empty array instead of null
+	if profiles == nil {
+		profiles = []models.ScoringProfile{}
+	}
+
+	responses := make([]ScoringProfileResponse, len(profiles))
+	for i, profile := range profiles {
+		var weights map[string]float64
+		json.Unmarshal([]byte(profile.WeightsJSON), &weights)
+
+		var thresholds map[string]interface{}
+		if profile.ThresholdsJSON != "" {
+			json.Unmarshal([]byte(profile.ThresholdsJSON), &thresholds)
+		}
+
+		var constraints map[string]interface{}
+		if profile.HardConstraintsJSON != "" {
+			json.Unmarshal([]byte(profile.HardConstraintsJSON), &constraints)
+		}
+
+		responses[i] = ScoringProfileResponse{
+			ScoringProfileID: profile.ScoringProfileID.String(),
+			TenantID:         profile.TenantID.String(),
+			Name:             profile.Name,
+			Version:          profile.Version,
+			Weights:          weights,
+			Thresholds:      thresholds,
+			HardConstraints: constraints,
+			CreatedBy:        profile.CreatedBy.String(),
+			CreatedAt:        profile.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	respondJSON(w, http.StatusOK, responses)
+}
+
+// GetScoringProfile gets a scoring profile by ID
+// @Summary Get scoring profile
+// @Description Get a scoring profile by ID
+// @Tags scoringProfiles
+// @Accept json
+// @Produce json
+// @Param scoringProfileId path string true "Scoring Profile ID" format(uuid)
+// @Success 200 {object} ScoringProfileResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/scoringProfiles/{scoringProfileId} [get]
+func (h *ScoringProfileHandler) GetScoringProfile(w http.ResponseWriter, r *http.Request) {
+	scoringProfileIDStr := chi.URLParam(r, "scoringProfileId")
+	scoringProfileID, err := uuid.Parse(scoringProfileIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid scoring profile ID")
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	profile, err := h.scoringProfileRepo.GetByID(r.Context(), scoringProfileID, tenantUUID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Scoring profile not found")
+		return
+	}
+
+	// Parse JSON fields for response
+	var weights map[string]float64
+	json.Unmarshal([]byte(profile.WeightsJSON), &weights)
+
+	var thresholds map[string]interface{}
+	if profile.ThresholdsJSON != "" {
+		json.Unmarshal([]byte(profile.ThresholdsJSON), &thresholds)
+	}
+
+	var constraints map[string]interface{}
+	if profile.HardConstraintsJSON != "" {
+		json.Unmarshal([]byte(profile.HardConstraintsJSON), &constraints)
+	}
+
+	response := ScoringProfileResponse{
+		ScoringProfileID: profile.ScoringProfileID.String(),
+		TenantID:         profile.TenantID.String(),
+		Name:             profile.Name,
+		Version:          profile.Version,
+		Weights:          weights,
+		Thresholds:      thresholds,
+		HardConstraints: constraints,
+		CreatedBy:        profile.CreatedBy.String(),
+		CreatedAt:        profile.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// UpdateScoringProfile updates a scoring profile
+// @Summary Update scoring profile
+// @Description Update a scoring profile
+// @Tags scoringProfiles
+// @Accept json
+// @Produce json
+// @Param scoringProfileId path string true "Scoring Profile ID" format(uuid)
+// @Param profile body UpdateScoringProfileRequest true "Scoring profile information"
+// @Success 200 {object} ScoringProfileResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/scoringProfiles/{scoringProfileId} [put]
+func (h *ScoringProfileHandler) UpdateScoringProfile(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only analyst and admin can update
+	role := auth.GetRole(r.Context())
+	if role != "analyst" && role != "admin" {
+		respondError(w, http.StatusForbidden, "Only analysts and admins can update scoring profiles")
+		return
+	}
+
+	scoringProfileIDStr := chi.URLParam(r, "scoringProfileId")
+	scoringProfileID, err := uuid.Parse(scoringProfileIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid scoring profile ID")
+		return
+	}
+
+	var req UpdateScoringProfileRequest
+	if err := ParseJSONRequest(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+
+	// Get existing profile
+	existing, err := h.scoringProfileRepo.GetByID(r.Context(), scoringProfileID, tenantUUID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Scoring profile not found")
+		return
+	}
+
+	// Validate version increment if provided
+	if req.Version != nil {
+		if *req.Version <= existing.Version {
+			respondError(w, http.StatusBadRequest, "Version must be greater than existing version")
+			return
+		}
+		existing.Version = *req.Version
+	}
+
+	// Update fields
+	existing.Name = req.Name
+
+	// Validate and update weights JSON if provided
+	if len(req.WeightsJSON) > 0 {
+		if _, err := scoring.ParseProfile(string(req.WeightsJSON)); err != nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid weights JSON: %v", err))
+			return
+		}
+		existing.WeightsJSON = string(req.WeightsJSON)
+	}
+
+	// Validate and update thresholds JSON if provided
+	if len(req.ThresholdsJSON) > 0 {
+		var thresholds map[string]interface{}
+		if err := json.Unmarshal(req.ThresholdsJSON, &thresholds); err != nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid thresholds JSON: %v", err))
+			return
+		}
+		existing.ThresholdsJSON = string(req.ThresholdsJSON)
+	}
+
+	// Validate and update hard constraints JSON if provided
+	if len(req.HardConstraintsJSON) > 0 {
+		var constraints map[string]interface{}
+		if err := json.Unmarshal(req.HardConstraintsJSON, &constraints); err != nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid hard constraints JSON: %v", err))
+			return
+		}
+		existing.HardConstraintsJSON = string(req.HardConstraintsJSON)
+	}
+
+	if err := h.scoringProfileRepo.Update(r.Context(), existing); err != nil {
+		h.logger.Error("Failed to update scoring profile", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to update scoring profile")
+		return
+	}
+
+	// Parse JSON fields for response
+	var weights map[string]float64
+	json.Unmarshal([]byte(existing.WeightsJSON), &weights)
+
+	var thresholds map[string]interface{}
+	if existing.ThresholdsJSON != "" {
+		json.Unmarshal([]byte(existing.ThresholdsJSON), &thresholds)
+	}
+
+	var constraints map[string]interface{}
+	if existing.HardConstraintsJSON != "" {
+		json.Unmarshal([]byte(existing.HardConstraintsJSON), &constraints)
+	}
+
+	response := ScoringProfileResponse{
+		ScoringProfileID: existing.ScoringProfileID.String(),
+		TenantID:         existing.TenantID.String(),
+		Name:             existing.Name,
+		Version:          existing.Version,
+		Weights:          weights,
+		Thresholds:      thresholds,
+		HardConstraints: constraints,
+		CreatedBy:        existing.CreatedBy.String(),
+		CreatedAt:        existing.CreatedAt.Format(time.RFC3339),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// DeleteScoringProfile deletes a scoring profile
+// @Summary Delete scoring profile
+// @Description Delete a scoring profile
+// @Tags scoringProfiles
+// @Accept json
+// @Produce json
+// @Param scoringProfileId path string true "Scoring Profile ID" format(uuid)
+// @Success 204 "No Content"
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 403 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /api/scoringProfiles/{scoringProfileId} [delete]
+func (h *ScoringProfileHandler) DeleteScoringProfile(w http.ResponseWriter, r *http.Request) {
+	// Check RBAC - only analyst and admin can delete
+	role := auth.GetRole(r.Context())
+	if role != "analyst" && role != "admin" {
+		respondError(w, http.StatusForbidden, "Only analysts and admins can delete scoring profiles")
+		return
+	}
+
+	scoringProfileIDStr := chi.URLParam(r, "scoringProfileId")
+	scoringProfileID, err := uuid.Parse(scoringProfileIDStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid scoring profile ID")
+		return
+	}
+
+	tenantID := h.getTenantID(r.Context())
+	if tenantID == "" {
+		respondError(w, http.StatusUnauthorized, "Missing tenant ID")
+		return
+	}
+
+	tenantUUID, _ := uuid.Parse(tenantID)
+	if err := h.scoringProfileRepo.Delete(r.Context(), scoringProfileID, tenantUUID); err != nil {
+		h.logger.Error("Failed to delete scoring profile", zap.Error(err))
+		respondError(w, http.StatusInternalServerError, "Failed to delete scoring profile")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Helper functions

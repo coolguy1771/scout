@@ -56,3 +56,5 @@ ALTER TABLE parcels DISABLE ROW LEVEL SECURITY;
 DROP FUNCTION IF EXISTS current_user_id();
 DROP FUNCTION IF EXISTS current_tenant_id();
 
+
+

@@ -47,9 +47,10 @@ type ValkeyConfig struct {
 }
 
 type APIConfig struct {
-	Port int
-	Env  string
-	CORS CORSConfig
+	Port      int
+	Env       string
+	CORS      CORSConfig
+	RateLimit RateLimitConfig
 }
 
 type CORSConfig struct {
@@ -59,6 +60,13 @@ type CORSConfig struct {
 	ExposedHeaders   []string
 	AllowCredentials bool
 	MaxAge           int
+}
+
+type RateLimitConfig struct {
+	Enabled     bool
+	GlobalLimit float64 // Global rate limit in requests per second
+	TenantLimit float64 // Per-tenant rate limit in requests per second
+	Burst       int     // Burst size (max tokens in bucket)
 }
 
 type JWTConfig struct {
@@ -178,6 +186,12 @@ func Load(configPath ...string) (*Config, error) {
 				AllowCredentials: k.Bool("api.cors.allow_credentials"),
 				MaxAge:           k.Int("api.cors.max_age"),
 			},
+			RateLimit: RateLimitConfig{
+				Enabled:     k.Bool("api.rate_limit.enabled"),
+				GlobalLimit: k.Float64("api.rate_limit.global_limit"),
+				TenantLimit: k.Float64("api.rate_limit.tenant_limit"),
+				Burst:       k.Int("api.rate_limit.burst"),
+			},
 		},
 		JWT: JWTConfig{
 			Secret:  k.String("jwt.secret"),
@@ -211,7 +225,26 @@ func Load(configPath ...string) (*Config, error) {
 		},
 	}
 
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
 	return cfg, nil
+}
+
+// Validate validates the configuration
+func (c *Config) Validate() error {
+	// Reject default JWT secret in production
+	if c.API.Env == "production" || c.API.Env == "prod" {
+		if c.JWT.Secret == "change-me-in-production" || c.JWT.Secret == "" {
+			return fmt.Errorf("JWT secret must be set to a secure value in production environment")
+		}
+		if len(c.JWT.Secret) < 32 {
+			return fmt.Errorf("JWT secret must be at least 32 characters long in production")
+		}
+	}
+	return nil
 }
 
 func setDefaults(k *koanf.Koanf) {
@@ -232,6 +265,12 @@ func setDefaults(k *koanf.Koanf) {
 	// API defaults
 	k.Set("api.port", 8080)
 	k.Set("api.env", "development")
+
+	// Rate limiting defaults
+	k.Set("api.rate_limit.enabled", true)
+	k.Set("api.rate_limit.global_limit", 1000.0) // 1000 req/s global
+	k.Set("api.rate_limit.tenant_limit", 100.0)  // 100 req/s per tenant
+	k.Set("api.rate_limit.burst", 200)           // Allow burst of 200 requests
 
 	// CORS defaults
 	k.Set("api.cors.allowed_origins", []string{"*"})

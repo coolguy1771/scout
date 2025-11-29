@@ -20,6 +20,11 @@ func NewParcelFeatureRepository(db *sqlx.DB, logger *zap.Logger) *ParcelFeatureR
 	return &ParcelFeatureRepository{db: db, logger: logger}
 }
 
+// GetDB returns the underlying database connection
+func (r *ParcelFeatureRepository) GetDB() *sqlx.DB {
+	return r.db
+}
+
 // GetByParcelID retrieves features for a parcel
 func (r *ParcelFeatureRepository) GetByParcelID(ctx context.Context, parcelID uuid.UUID) (*models.ParcelFeature, error) {
 	var feature models.ParcelFeature
@@ -156,3 +161,5 @@ func (r *ParcelFeatureRepository) BatchUpsert(ctx context.Context, features []mo
 
 	return nil
 }
+
+

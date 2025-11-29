@@ -48,7 +48,7 @@ func New(cfg *config.Config, db *database.DB, logger *zap.Logger) (*Worker, erro
 	parcelFeatureRepo := repository.NewParcelFeatureRepository(db.DB, logger)
 	featureService := features.NewService(parcelRepo, parcelFeatureRepo, logger)
 
-	exportJob := jobs.NewExportJob(jobRepo, exportRepo, tileStorage, logger)
+	exportJob := jobs.NewExportJob(jobRepo, exportRepo, parcelRepo, tileStorage, logger)
 	tileBuildJob := jobs.NewTileBuildJob(jobRepo, tileStorage, logger)
 	featureJob := jobs.NewFeatureRecomputeJob(jobRepo, featureService, logger)
 

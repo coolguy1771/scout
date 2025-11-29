@@ -180,3 +180,5 @@ CREATE POLICY audit_events_insert ON audit_events
     FOR INSERT
     WITH CHECK (tenant_id = current_tenant_id());
 
+
+

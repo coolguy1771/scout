@@ -93,3 +93,5 @@ func ParseSearchQuery(data []byte) (*SearchQuery, error) {
 
 	return &query, nil
 }
+
+

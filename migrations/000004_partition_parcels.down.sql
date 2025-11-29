@@ -27,3 +27,5 @@ ALTER TABLE parcel_features
 ADD CONSTRAINT parcel_features_parcel_id_fkey 
 FOREIGN KEY (parcel_id) REFERENCES parcels(parcel_id) ON DELETE CASCADE;
 
+
+

@@ -67,3 +67,18 @@ type ExportResponse struct {
 	URL         string `json:"url,omitempty"` // Presigned URL
 	CreatedAt   string `json:"createdAt"`
 }
+
+// ScoringProfileResponse represents a scoring profile response
+type ScoringProfileResponse struct {
+	ScoringProfileID string                 `json:"scoringProfileId"`
+	TenantID         string                 `json:"tenantId"`
+	Name             string                 `json:"name"`
+	Version          int                    `json:"version"`
+	Weights          map[string]float64     `json:"weights"`
+	Thresholds       map[string]interface{} `json:"thresholds,omitempty"`
+	HardConstraints  map[string]interface{} `json:"hardConstraints,omitempty"`
+	CreatedBy        string                 `json:"createdBy"`
+	CreatedAt        string                 `json:"createdAt"`
+}
+
+

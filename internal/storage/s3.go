@@ -168,3 +168,16 @@ func (s *S3Storage) ListObjects(ctx context.Context, prefix string, maxKeys int3
 
 	return keys, nil
 }
+
+// HealthCheck checks if S3 storage is accessible
+func (s *S3Storage) HealthCheck(ctx context.Context) error {
+	// Try to list objects with a limit of 1 to verify connectivity
+	_, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:  aws.String(s.bucket),
+		MaxKeys: aws.Int32(1),
+	})
+	if err != nil {
+		return fmt.Errorf("S3 health check failed: %w", err)
+	}
+	return nil
+}

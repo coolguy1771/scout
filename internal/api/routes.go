@@ -15,6 +15,7 @@ func RegisterRoutes(r chi.Router, db *database.DB, logger *zap.Logger, cfg *conf
 	searchHandler := NewSearchHandler(db, logger, cfg)
 	projectHandler := NewProjectHandler(db, logger, cfg)
 	exportHandler := NewExportHandler(db, logger, cfg)
+	scoringProfileHandler := NewScoringProfileHandler(db, logger, cfg)
 
 	// Parcel routes
 	r.Route("/parcels", func(r chi.Router) {
@@ -67,6 +68,15 @@ func RegisterRoutes(r chi.Router, db *database.DB, logger *zap.Logger, cfg *conf
 		r.Get("/{layerId}", layerHandler.GetLayer)
 		r.Put("/{layerId}", layerHandler.UpdateLayer)
 		r.Delete("/{layerId}", layerHandler.DeleteLayer)
+	})
+
+	// Scoring profile routes
+	r.Route("/scoringProfiles", func(r chi.Router) {
+		r.Post("/", scoringProfileHandler.CreateScoringProfile)
+		r.Get("/", scoringProfileHandler.ListScoringProfiles)
+		r.Get("/{scoringProfileId}", scoringProfileHandler.GetScoringProfile)
+		r.Put("/{scoringProfileId}", scoringProfileHandler.UpdateScoringProfile)
+		r.Delete("/{scoringProfileId}", scoringProfileHandler.DeleteScoringProfile)
 	})
 }
 

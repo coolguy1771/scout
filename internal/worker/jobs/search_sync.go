@@ -161,3 +161,5 @@ func (j *SearchSyncJob) fetchParcelsBatch(ctx context.Context, limit, offset int
 
 	return parcels, nil
 }
+
+

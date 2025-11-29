@@ -283,6 +283,16 @@ func (h *LayerHandler) UpdateLayer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate request
+	if err := ValidateRequest(&req); err != nil {
+		errors := GetValidationErrors(err)
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Validation failed",
+			"details": errors,
+		})
+		return
+	}
+
 	tenantIDStr := auth.GetTenantID(r.Context())
 	if tenantIDStr == "" {
 		respondError(w, http.StatusBadRequest, "Tenant ID required")

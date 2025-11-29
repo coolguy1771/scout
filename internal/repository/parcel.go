@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"go.uber.org/zap"
 
 	"github.com/coolguy1771/scout/internal/models"
@@ -206,7 +207,7 @@ func (r *ParcelRepository) SearchCandidates(ctx context.Context, bbox []float64,
 	// Zoning tags filter
 	if zoningTags, ok := filters["zoningTags"].([]string); ok && len(zoningTags) > 0 {
 		query += fmt.Sprintf(" AND zoning_tags && $%d", argIdx)
-		args = append(args, zoningTags)
+		args = append(args, pq.Array(zoningTags))
 		argIdx++
 	}
 
