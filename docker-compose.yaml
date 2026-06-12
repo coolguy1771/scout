@@ -29,7 +29,7 @@ services:
       retries: 5
 
   opensearch:
-    image: opensearchproject/opensearch:3.3.2
+    image: opensearchproject/opensearch:3.7.0
     container_name: scout-opensearch
     environment:
       - discovery.type=single-node
